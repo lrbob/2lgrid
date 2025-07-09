@@ -1,0 +1,26 @@
+/home/lr/miniconda3/envs/rl2grid/lib/python3.11/site-packages/grid2op/Backend/pandaPowerBackend.py:39: UserWarning: Numba cannot be loaded. You will gain possibly massive speed if installing it by 
+	/home/lr/miniconda3/envs/rl2grid/bin/python -m pip install numba
+
+  warnings.warn(
+cannot import name 'ReadPypowNetData' from 'grid2op.Chronics' (/home/lr/miniconda3/envs/rl2grid/lib/python3.11/site-packages/grid2op/Chronics/__init__.py)
+Traceback (most recent call last):
+  File "/home/lr/miniconda3/envs/rl2grid/lib/python3.11/site-packages/grid2op/MakeEnv/MakeFromPath.py", line 350, in make_from_dataset_path
+    spec.loader.exec_module(config_module)
+  File "<frozen importlib._bootstrap_external>", line 940, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "/home/lr/data_grid2op/l2rpn_2019/config.py", line 5, in <module>
+    from grid2op.Chronics import ReadPypowNetData
+ImportError: cannot import name 'ReadPypowNetData' from 'grid2op.Chronics' (/home/lr/miniconda3/envs/rl2grid/lib/python3.11/site-packages/grid2op/Chronics/__init__.py)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/lr/Desktop/workspace/RL2Grid-main/download.py", line 11, in <module>
+    env = grid2op.make(env_name)   # 第一次调用会自动下载数据
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lr/miniconda3/envs/rl2grid/lib/python3.11/site-packages/grid2op/MakeEnv/Make.py", line 526, in make
+    return make_from_path_fn(
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/lr/miniconda3/envs/rl2grid/lib/python3.11/site-packages/grid2op/MakeEnv/MakeFromPath.py", line 354, in make_from_dataset_path
+    raise EnvError(
+grid2op.Exceptions.envExceptions.EnvError: Grid2OpException EnvError "Invalid dataset config file: /home/lr/data_grid2op/l2rpn_2019/config.py"

@@ -1,0 +1,12 @@
+name: rl2grid
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.11
+  - tensorboard
+  - wandb
+  - gymnasium=0.29.1
+  - stable-baselines3=2.3.2
+  - scipy=1.11.3
+  

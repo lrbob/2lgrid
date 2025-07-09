@@ -37,6 +37,11 @@ def get_alg_args() -> Namespace:
     parser.add_argument("--entropy-coef", type=float, default=0.01, help="Entropy coefficient")
     parser.add_argument("--vf-coef", type=float, default=0.5, help="Value function coefficient")
 
+    # CCPO options
+    parser.add_argument("--vve", action="store_true", help="Enable Versatile Value Estimation")
+    parser.add_argument("--cvi", action="store_true", help="Enable Conditioned Variational Inference")
+    parser.add_argument("--fixed-threshold", type=float, default=0.0, help="Fixed constraint threshold")
+
     parser.add_argument("--cost-threshold", type=float, default=15.0, help="Cost threshold")
     parser.add_argument("--lag-mul", type=float, default=0.0, help="Initial value for the multiplier")
     parser.add_argument("--lag-lr", type=float, default=0.05, help="Learning rate for the multiplier")

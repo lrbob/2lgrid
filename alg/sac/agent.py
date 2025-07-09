@@ -24,13 +24,22 @@ class SoftQNetwork(nn.Module):
             continuous_actions: Flag indicating whether the action space is continuous.
         """
         super().__init__()
+        self.use_threshold = args.vve or args.cvi
+        self.threshold_dim = 1
+        self.use_threshold = args.vve or args.cvi
+        self.threshold_dim = 1
 
         critic_layers = args.critic_layers
         act_str, self.act_fn = args.critic_act_fn, th_act_fns[args.critic_act_fn]
 
+        critic_input_dim = np.prod(envs.single_observation_space.shape)
+        if self.use_threshold:
+            critic_input_dim += self.threshold_dim
+        if continuous_actions:
+            critic_input_dim += np.prod(envs.single_action_space.shape)
         self.fc_i = Linear(
-            np.prod(envs.single_observation_space.shape) + np.prod(envs.single_action_space.shape) if continuous_actions else np.prod(envs.single_observation_space.shape),      
-            critic_layers[0], 
+            critic_input_dim,
+            critic_layers[0],
             act_str
         )
         
@@ -45,7 +54,7 @@ class SoftQNetwork(nn.Module):
             self.fc_o = Linear(critic_layers[-1], envs.single_action_space.n, 'linear')
             self.forward = self.forward_discrete
 
-    def forward_continuous(self, x: th.Tensor, a: th.Tensor) -> th.Tensor:
+    def forward_continuous(self, x: th.Tensor, a: th.Tensor, threshold: Optional[th.Tensor] = None) -> th.Tensor:
         """Forward pass for the critic network in case of continuous actions.
 
         Args:
@@ -55,11 +64,15 @@ class SoftQNetwork(nn.Module):
         Returns:
             A tensor with the output value from the critic network.
         """
-        x = self.act_fn(self.fc_i(th.cat([x, a], 1)))
+        if self.use_threshold and threshold is not None:
+            x = th.cat([x, threshold, a], 1)
+        else:
+            x = th.cat([x, a], 1)
+        x = self.act_fn(self.fc_i(x))
         for fc in self.fc_h: x = self.act_fn(fc(x))
         return self.fc_o(x)
     
-    def forward_discrete(self, x: th.Tensor) -> th.Tensor:
+    def forward_discrete(self, x: th.Tensor, threshold: Optional[th.Tensor] = None) -> th.Tensor:
         """Forward pass for the critic network in case of discrete actions.
 
         Args:
@@ -68,6 +81,8 @@ class SoftQNetwork(nn.Module):
         Returns:
             A tensor with the output value from the critic network.
         """
+        if self.use_threshold and threshold is not None:
+            x = th.cat([x, threshold], 1)
         x = self.act_fn(self.fc_i(x))
         for fc in self.fc_h: x = self.act_fn(fc(x))
         return self.fc_o(x)     
@@ -102,8 +117,11 @@ class Actor(nn.Module):
 
         actor_layers = args.actor_layers
         act_str, self.act_fn = args.actor_act_fn, th_act_fns[args.actor_act_fn]
+        actor_input_dim = np.prod(envs.single_observation_space.shape)
+        if self.use_threshold:
+            actor_input_dim += self.threshold_dim
         self.fc_i = Linear(
-            np.prod(envs.single_observation_space.shape), actor_layers[0], 
+            actor_input_dim, actor_layers[0],
             act_str
         )
 
@@ -132,7 +150,7 @@ class Actor(nn.Module):
             self.get_action = self.get_discrete_action
             self.get_eval_action = self.get_discrete_eval_action
 
-    def continuous_forward(self, x: th.Tensor) -> Tuple[th.Tensor, th.Tensor]:
+    def continuous_forward(self, x: th.Tensor, threshold: Optional[th.Tensor] = None) -> Tuple[th.Tensor, th.Tensor]:
         """Forward pass for the actor network in case of continuous actions.
 
         Args:
@@ -141,6 +159,8 @@ class Actor(nn.Module):
         Returns:
             A tuple containing tensors for the mean of the action distribution, and the log standard deviation of the action distribution.
         """
+        if self.use_threshold and threshold is not None:
+            x = th.cat([x, threshold], 1)
         x = self.act_fn(self.fc_i(x))
         for fc in self.fc_h: x = self.act_fn(fc(x))
         mean = self.fc_mu(x)
@@ -150,7 +170,7 @@ class Actor(nn.Module):
 
         return mean, log_std
 
-    def get_continuous_action(self, x: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    def get_continuous_action(self, x: th.Tensor, threshold: Optional[th.Tensor] = None) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """Sample actions from the actor network in case of continuous actions.
 
         Args:
@@ -159,7 +179,7 @@ class Actor(nn.Module):
         Returns:
             A tuple containing tensors for the sampled continuous actions, log probability of the sampled actions, and mean of the action distribution.
         """
-        mean, log_std = self(x)
+        mean, log_std = self(x, threshold=threshold)
         std = log_std.exp()
         normal = Normal(mean, std)
         x_t = normal.rsample()  # for reparameterization trick (mean + std * N(0,1))
@@ -172,7 +192,7 @@ class Actor(nn.Module):
         mean = th.tanh_(mean) * self.action_scale + self.action_bias
         return action, log_prob, mean
     
-    def get_continuous_eval_action(self, x: th.Tensor) -> th.Tensor:
+    def get_continuous_eval_action(self, x: th.Tensor, threshold: Optional[th.Tensor] = None) -> th.Tensor:
         """Get deterministic evaluation continuous actions.
 
         Args:
@@ -181,11 +201,11 @@ class Actor(nn.Module):
         Returns:
             A tensor with deterministic continuous actions for evaluation.
         """
-        mean, _ = self(x)
+        mean, _ = self(x, threshold=threshold)
         mean = th.tanh_(mean) * self.action_scale + self.action_bias
         return mean
     
-    def discrete_forward(self, x: th.Tensor) -> th.Tensor:
+    def discrete_forward(self, x: th.Tensor, threshold: Optional[th.Tensor] = None) -> th.Tensor:
         """Forward pass for the actor network in case of discrete actions.
 
         Args:
@@ -194,11 +214,13 @@ class Actor(nn.Module):
         Returns:
             A tensor containing logits (raw output) from the actor network.
         """
+        if self.use_threshold and threshold is not None:
+            x = th.cat([x, threshold], 1)
         x = self.act_fn(self.fc_i(x))
         for fc in self.fc_h: x = self.act_fn(fc(x))
         return self.fc_o(x)
 
-    def get_discrete_action(self, x: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    def get_discrete_action(self, x: th.Tensor, threshold: Optional[th.Tensor] = None) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """Sample actions from the actor network in case of discrete actions.
 
         Args:
@@ -207,7 +229,7 @@ class Actor(nn.Module):
         Returns:
             A tuple containing tensors for the sampled discrete actions, the log probability of the sampled actions, and the action probabilities from the softmax output.
         """
-        logits = self(x)
+        logits = self(x, threshold=threshold)
         policy_dist = Categorical(logits=logits)
         action = policy_dist.sample()
         # Action probabilities for calculating the adapted soft-Q loss
@@ -215,7 +237,7 @@ class Actor(nn.Module):
         log_prob = F.log_softmax(logits, dim=-1)    # was 1
         return action, log_prob, action_probs
     
-    def get_discrete_eval_action(self, x: th.Tensor) -> th.Tensor:
+    def get_discrete_eval_action(self, x: th.Tensor, threshold: Optional[th.Tensor] = None) -> th.Tensor:
         """Get deterministic evaluation discrete actions.
 
         Args:
@@ -224,4 +246,4 @@ class Actor(nn.Module):
         Returns:
             A tensor with deterministic discrete actions for evaluation.
         """
-        return self.get_discrete_action(x)[0]
+        return self.get_discrete_action(x, threshold=threshold)[0]

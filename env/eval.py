@@ -23,6 +23,7 @@ class Evaluator:
             device: Device to run the model on.
         """
  
+        self.args = args
         self.env = auxiliary_make_env(args, eval_env=True)[0]  # Initialize synchronized vector environment
         self.max_steps = self.env.init_env.chronics_handler.max_episode_duration()  # Get max episode duration
 
@@ -55,9 +56,12 @@ class Evaluator:
         if self.use_heuristic: ep_rewards += list(info['rewards'].values())
 
         while len(ep_survivals) < eval_ep:
-            # action = model.get_eval_action(th.tensor(obs, dtype=th.float).to(self.device).detach().cpu().numpy())
-            obs_t = th.tensor(obs, dtype = th.float, device=self.device)
-            action_t = model.get_eval_action(obs_t)
+            obs_t = th.tensor(obs, dtype=th.float, device=self.device)
+            if hasattr(model, "use_threshold") and model.use_threshold:
+                th_val = th.full((obs_t.shape[0], 1), getattr(self.args, "fixed_threshold", 0.0), device=self.device)
+                action_t = model.get_eval_action(obs_t, threshold=th_val)
+            else:
+                action_t = model.get_eval_action(obs_t)
             action = action_t.detach().cpu().numpy()
             next_obs, _, _, _, info = self.env.step(action)
 
@@ -113,8 +117,12 @@ class CMDPEvaluator(Evaluator):
         if self.use_heuristic: ep_rewards += list(info['rewards'].values())
 
         while len(ep_survivals) < eval_ep:
-            obs_t = th.tensor(obs, dtype = th.float, device=self.device)
-            action_t = model.get_eval_action(obs_t)
+            obs_t = th.tensor(obs, dtype=th.float, device=self.device)
+            if hasattr(model, "use_threshold") and model.use_threshold:
+                th_val = th.full((obs_t.shape[0], 1), getattr(self.args, "fixed_threshold", 0.0), device=self.device)
+                action_t = model.get_eval_action(obs_t, threshold=th_val)
+            else:
+                action_t = model.get_eval_action(obs_t)
             action = action_t.detach().cpu().numpy()
             # action = model.get_eval_action(th.tensor(obs, dtype=th.float).to(self.device).detach().cpu.numpy())
             next_obs, _, _, _, info = self.env.step(action)

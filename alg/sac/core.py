@@ -81,6 +81,7 @@ class SAC:
         global_step = 0 if not ckpt.resumed else ckpt.loaded_run['global_step']
         start_time = start_time
         obs, _ = envs.reset(seed=args.seed)
+        threshold_tensor = th.full((args.n_envs, 1), args.fixed_threshold, device=device)
        
         try:
             for step in range(init_step, int(args.total_timesteps // args.n_envs)):
@@ -90,7 +91,8 @@ class SAC:
                     actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
                 else:
                     with th.no_grad():
-                        actions, _, _ = actor.get_action(th.tensor(obs).to(device))
+                        obs_t = th.tensor(obs).to(device)
+                        actions, _, _ = actor.get_action(obs_t, threshold=threshold_tensor)
                         actions = actions.detach().cpu().numpy()
 
                 next_obs, rewards, terminations, truncations, infos = envs.step(actions)
@@ -113,15 +115,17 @@ class SAC:
 
                         if continuous_actions:
                             with th.no_grad():
-                                next_state_actions, next_state_log_pi, _ = actor.get_action(data.next_observations)
-                                critic1_next_tg = tg_critic1(data.next_observations, next_state_actions)
-                                critic2_next_tg = tg_critic2(data.next_observations, next_state_actions)
+                                batch_th = th.full((data.next_observations.shape[0], 1), args.fixed_threshold, device=device)
+                                next_state_actions, next_state_log_pi, _ = actor.get_action(data.next_observations, threshold=batch_th)
+                                critic1_next_tg = tg_critic1(data.next_observations, next_state_actions, threshold=batch_th)
+                                critic2_next_tg = tg_critic2(data.next_observations, next_state_actions, threshold=batch_th)
                             
                                 min_qf_next_tg = th.min(critic1_next_tg, critic2_next_tg) - alpha * next_state_log_pi
                                 next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * args.gamma * (min_qf_next_tg).view(-1)
 
-                            critic1_a_values = critic1(data.observations, data.actions).view(-1)
-                            critic2_a_values = critic2(data.observations, data.actions).view(-1)
+                            batch_th = th.full((data.observations.shape[0], 1), args.fixed_threshold, device=device)
+                            critic1_a_values = critic1(data.observations, data.actions, threshold=batch_th).view(-1)
+                            critic2_a_values = critic2(data.observations, data.actions, threshold=batch_th).view(-1)
                             critic1_loss = F.mse_loss(critic1_a_values, next_q_value)
                             critic2_loss = F.mse_loss(critic2_a_values, next_q_value)
                             critic_loss = critic1_loss + critic2_loss
@@ -133,9 +137,10 @@ class SAC:
 
                             if global_step % (args.train_freq * args.actor_train_freq) == 0:  # TD 3 Delayed update support
                                 for _ in range(args.actor_train_freq):  # Compensate for the delay by doing 'actor_update_interval' instead of 1
-                                    pi, log_pi, _ = actor.get_action(data.observations)
-                                    critic1_pi = critic1(data.observations, pi)
-                                    critic2_pi = critic2(data.observations, pi)
+                                    batch_th = th.full((data.observations.shape[0], 1), args.fixed_threshold, device=device)
+                                    pi, log_pi, _ = actor.get_action(data.observations, threshold=batch_th)
+                                    critic1_pi = critic1(data.observations, pi, threshold=batch_th)
+                                    critic2_pi = critic2(data.observations, pi, threshold=batch_th)
                                     min_critic_pi = th.min(critic1_pi, critic2_pi)
                                     actor_loss = ((alpha * log_pi) - min_critic_pi).mean()
 
@@ -145,18 +150,19 @@ class SAC:
 
                                     if args.autotune:
                                         with th.no_grad():
-                                            _, log_pi, _ = actor.get_action(data.observations)
+                                            _, log_pi, _ = actor.get_action(data.observations, threshold=batch_th)
                                         alpha_loss = (-log_alpha.exp() * (log_pi + tg_entropy)).mean()
 
                                         alpha_optim.zero_grad()
                                         alpha_loss.backward()
                                         alpha_optim.step()
                                         alpha = log_alpha.exp().item()
-                        else: 
+                        else:
                             with th.no_grad():
-                                _, next_state_log_pi, next_state_action_probs = actor.get_action(data.next_observations)
-                                critic1_next_tg = tg_critic1(data.next_observations)
-                                critic2_next_tg = tg_critic2(data.next_observations)
+                                batch_th = th.full((data.next_observations.shape[0], 1), args.fixed_threshold, device=device)
+                                _, next_state_log_pi, next_state_action_probs = actor.get_action(data.next_observations, threshold=batch_th)
+                                critic1_next_tg = tg_critic1(data.next_observations, threshold=batch_th)
+                                critic2_next_tg = tg_critic2(data.next_observations, threshold=batch_th)
                                 # Use the action probabilities instead of MC sampling to estimate the expectation
                                 min_qf_next_tg = next_state_action_probs * (
                                     th.min(critic1_next_tg, critic2_next_tg) - alpha * next_state_log_pi
@@ -166,8 +172,9 @@ class SAC:
                                 next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * args.gamma * (min_qf_next_tg)
 
                             # Use Q-values only for the taken actions
-                            critic1_a_values = critic1(data.observations).gather(1, data.actions.long()).view(-1)
-                            critic2_a_values = critic2(data.observations).gather(1, data.actions.long()).view(-1)
+                            batch_th = th.full((data.observations.shape[0], 1), args.fixed_threshold, device=device)
+                            critic1_a_values = critic1(data.observations, threshold=batch_th).gather(1, data.actions.long()).view(-1)
+                            critic2_a_values = critic2(data.observations, threshold=batch_th).gather(1, data.actions.long()).view(-1)
                             
                             critic1_loss = F.mse_loss(critic1_a_values, next_q_value)
                             critic2_loss = F.mse_loss(critic2_a_values, next_q_value)
@@ -179,10 +186,10 @@ class SAC:
                             critic_optim.step()
 
                             # Actor training
-                            _, log_pi, action_probs = actor.get_action(data.observations)
+                            _, log_pi, action_probs = actor.get_action(data.observations, threshold=batch_th)
                             with th.no_grad():
-                                critic1_values = critic1(data.observations)
-                                critic2_values = critic2(data.observations)
+                                critic1_values = critic1(data.observations, threshold=batch_th)
+                                critic2_values = critic2(data.observations, threshold=batch_th)
                                 min_critic = th.min(critic1_values, critic2_values)
                             # No need for reparameterization, the expectation can be calculated for discrete actions
                             actor_loss = (action_probs * ((alpha * log_pi) - min_critic)).mean()

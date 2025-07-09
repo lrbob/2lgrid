@@ -35,6 +35,10 @@ def get_alg_args() -> Namespace:
     parser.add_argument("--buffer-size", type=int, default=1000000, help="Replay memory buffer size")
     parser.add_argument("--batch-size", type=int, default=128, help="Batch size of sample from the replay memory")
 
-    return parser.parse_known_args()[0]
+    # CCPO options
+    parser.add_argument("--vve", action="store_true", help="Enable Versatile Value Estimation")
+    parser.add_argument("--cvi", action="store_true", help="Enable Conditioned Variational Inference")
+    parser.add_argument("--fixed-threshold", type=float, default=0.0, help="Fixed constraint threshold")
 
+    return parser.parse_known_args()[0]
   

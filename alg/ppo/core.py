@@ -70,6 +70,7 @@ class PPO:
         start_time = start_time
         next_obs, _ = envs.reset()
         next_obs = th.tensor(next_obs).to(device)
+        threshold_tensor = th.full((args.n_envs, 1), args.fixed_threshold, device=device)
 
         try:
             for iteration in range(init_rollout, n_rollouts + 1):
@@ -84,8 +85,8 @@ class PPO:
                     observations[step] = next_obs
 
                     with th.no_grad():
-                        action, logprob, _ = agent.get_action(next_obs)
-                        value = agent.get_value(next_obs)
+                        action, logprob, _ = agent.get_action(next_obs, threshold=threshold_tensor)
+                        value = agent.get_value(next_obs, threshold=threshold_tensor)
                         values[step] = value.flatten()
                     actions[step] = action
                     logprobs[step] = logprob
@@ -114,7 +115,7 @@ class PPO:
                     lastgaelam = 0
                     for t in reversed(range(args.n_steps)):
                         if t == args.n_steps - 1:
-                            nextvalues = agent.get_value(real_next_obs).reshape(1, -1)
+                            nextvalues = agent.get_value(real_next_obs, threshold=threshold_tensor).reshape(1, -1)
                         else:
                             nextvalues = values[t + 1]
                         delta = rewards[t] + args.gamma * nextvalues * (1 - terminations[t]) - values[t]
@@ -123,6 +124,7 @@ class PPO:
    
                 # Flatten the batch
                 b_obs = observations.reshape((-1,) + envs.single_observation_space.shape)
+                b_threshold = threshold_tensor.repeat(args.n_steps, 1)
                 b_logprobs = logprobs.reshape(-1)
                 b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
                 b_advantages = advantages.reshape(-1)
@@ -137,7 +139,7 @@ class PPO:
                     for start in range(0, batch_size, minibatch_size):
                         end = start + minibatch_size
                         mb_inds = b_inds[start:end]
-                        _, newlogprob, entropy = agent.get_action(b_obs[mb_inds], b_actions.long()[mb_inds])
+                        _, newlogprob, entropy = agent.get_action(b_obs[mb_inds], b_actions.long()[mb_inds], threshold=b_threshold[mb_inds])
                         logratio = newlogprob - b_logprobs[mb_inds]
                         ratio = logratio.exp()
 
@@ -165,7 +167,7 @@ class PPO:
                         actor_optim.step()
 
                         # Value loss
-                        newvalue = agent.get_value(b_obs[mb_inds]).view(-1)
+                        newvalue = agent.get_value(b_obs[mb_inds], threshold=b_threshold[mb_inds]).view(-1)
                         if args.clip_vfloss:
                             v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
                             v_clipped = b_values[mb_inds] + th.clamp(

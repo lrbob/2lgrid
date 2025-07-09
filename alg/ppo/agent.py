@@ -22,13 +22,18 @@ class Agent(nn.Module):
             continuous_actions: Flag indicating continuous or discrete action space.
         """
         super().__init__()
+        self.use_threshold = args.vve or args.cvi
+        self.threshold_dim = 1
 
         # Critic network setup
         critic_layers = args.critic_layers
         act_str, act_fn = args.critic_act_fn, th_act_fns[args.critic_act_fn]
         layers = []
+        critic_input_dim = np.prod(envs.single_observation_space.shape)
+        if self.use_threshold:
+            critic_input_dim += self.threshold_dim
         layers.extend([
-            Linear(np.prod(envs.single_observation_space.shape), critic_layers[0], act_str), 
+            Linear(critic_input_dim, critic_layers[0], act_str),
             act_fn
         ])
 
@@ -41,8 +46,11 @@ class Agent(nn.Module):
         actor_layers = args.actor_layers
         act_str, act_fn = args.actor_act_fn, th_act_fns[args.actor_act_fn]
         layers = []
+        actor_input_dim = np.prod(envs.single_observation_space.shape)
+        if self.use_threshold:
+            actor_input_dim += self.threshold_dim
         layers.extend([
-            Linear(np.prod(envs.single_observation_space.shape), actor_layers[0], act_str), 
+            Linear(actor_input_dim, actor_layers[0], act_str),
             act_fn
         ])
         for idx, embed_dim in enumerate(actor_layers[1:], start=1): 
@@ -60,7 +68,7 @@ class Agent(nn.Module):
             self.get_eval_action = self.get_eval_discrete_action
         self.actor = nn.Sequential(*layers)
 
-    def get_value(self, x: th.Tensor) -> th.Tensor:
+    def get_value(self, x: th.Tensor, threshold: Optional[th.Tensor] = None) -> th.Tensor:
         """Compute value estimate (critic output) for given observations.
 
         Args:
@@ -69,9 +77,11 @@ class Agent(nn.Module):
         Returns:
             A tensor containing value estimates.
         """
+        if self.use_threshold and threshold is not None:
+            x = th.cat([x, threshold], dim=1)
         return self.critic(x)
 
-    def get_discrete_action(self, x: th.Tensor, action: th.Tensor = None) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    def get_discrete_action(self, x: th.Tensor, action: th.Tensor = None, threshold: Optional[th.Tensor] = None) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """Sample discrete actions and compute log probabilities and entropy.
 
         Args:
@@ -81,13 +91,15 @@ class Agent(nn.Module):
         Returns:
             A tuple containing tensors for the sampled discrete actions, the log probability of the sampled actions, and the entropy of the action distribution.
         """
+        if self.use_threshold and threshold is not None:
+            x = th.cat([x, threshold], dim=1)
         logits = self.actor(x)
         probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy()
 
-    def get_continuous_action(self, x: th.Tensor, action: th.Tensor = None) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    def get_continuous_action(self, x: th.Tensor, action: th.Tensor = None, threshold: Optional[th.Tensor] = None) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """Sample continuous actions and compute log probabilities and entropy.
 
         Args:
@@ -97,6 +109,8 @@ class Agent(nn.Module):
         Returns:
             A tuple containing tensors for the sampled continuous actions, the log probability of the sampled actions, and the entropy of the action distribution.
         """
+        if self.use_threshold and threshold is not None:
+            x = th.cat([x, threshold], dim=1)
         action_mu = self.actor(x)
         action_logstd = self.logstd.expand_as(action_mu)
         action_std = th.exp(action_logstd)
@@ -105,7 +119,7 @@ class Agent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1)
     
-    def get_eval_discrete_action(self, x: th.Tensor) -> th.Tensor:
+    def get_eval_discrete_action(self, x: th.Tensor, threshold: Optional[th.Tensor] = None) -> th.Tensor:
         """Evaluate discrete actions without exploration.
 
         Args:
@@ -114,9 +128,9 @@ class Agent(nn.Module):
         Returns:
             A tensor with deterministic discrete actions for evaluation.
         """
-        return self.get_discrete_action(x)[0]
+        return self.get_discrete_action(x, threshold=threshold)[0]
       
-    def get_eval_continuous_action(self, x: th.Tensor) -> th.Tensor:
+    def get_eval_continuous_action(self, x: th.Tensor, threshold: Optional[th.Tensor] = None) -> th.Tensor:
         """Evaluate continuous actions without exploration.
 
         Args:
@@ -125,5 +139,7 @@ class Agent(nn.Module):
         Returns:
             A tensor with deterministic continuous actions for evaluation
         """
+        if self.use_threshold and threshold is not None:
+            x = th.cat([x, threshold], dim=1)
         action_mu = self.actor(x)
         return action_mu

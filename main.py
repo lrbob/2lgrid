@@ -114,4 +114,9 @@ if __name__ == "__main__":
     parser.add_argument("--cuda", type=str2bool, default=False, help="Enable CUDA by default.")
     parser.add_argument("--n-threads", type=int, default=4, help="Max number of torch threads.")
 
+    # CCPO related options
+    parser.add_argument("--vve", action="store_true", help="Enable Versatile Value Estimation")
+    parser.add_argument("--cvi", action="store_true", help="Enable Conditioned Variational Inference")
+    parser.add_argument("--fixed-threshold", type=float, default=0.0, help="Fixed constraint threshold")
+
     main(parser.parse_known_args()[0])

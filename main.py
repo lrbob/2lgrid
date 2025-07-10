@@ -13,8 +13,8 @@ from common.imports import *
 from common.utils import set_random_seed, set_torch, str2bool
 from env.config import get_env_args
 from env.utils import auxiliary_make_env
-from alg.ppo_ccpo.conditioned_ppo import ConditionedPPO
-from alg.sac_ccpo.conditioned_sac import ConditionedSAC
+from alg.ppo_cppo.agent import ConditionedPPO
+# from alg.sac_cppo.agent import ConditionedSAC
 
 # Dictionary mapping algorithm names to their corresponding classes
 ALGORITHMS: Dict[str, Type[Any]] = {'DQN': DQN, 'PPO': PPO, 'SAC': SAC, 'TD3': TD3, 'LAGRPPO': LagrPPO, 'PPO_CCPO': ConditionedPPO, 'SAC_CCPO': ConditionedSAC}
@@ -58,7 +58,7 @@ def main(args: Namespace) -> None:
     if alg == 'LAGRPPO': checkpoint = LagrPPOCheckpoint(run_name, args)
     elif alg == 'DQN': checkpoint = DQNCheckpoint(run_name, args)
     elif alg == ['PPO', 'PPO_CCPO'] : checkpoint = PPOCheckpoint(run_name, args)
-    elif alg == ['SAC', 'SAC_CCPO'] : checkpoint = SACCheckpoint(run_name, args)
+    # elif alg == ['SAC', 'SAC_CCPO'] : checkpoint = SACCheckpoint(run_name, args)
     elif alg == 'TD3': checkpoint = TD3Checkpoint(run_name, args)
     else:
         pass  # This case should not occur due to earlier assertion

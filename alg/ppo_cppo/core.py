@@ -1,6 +1,6 @@
 from time import time
 
-from .agent import ConditionedPPO
+from .agent import RolloutBuffer
 from .config import get_alg_args
 from common.checkpoint import CPPOCheckpoint
 from common.imports import *
@@ -8,13 +8,13 @@ from common.logger import Logger
 from env.eval import Evaluator
 
 class CPPO:
-    """Thin wrapper running the ConditionedPPO agent."""
+    """Thin wrapper running the RolloutBuffer agent."""
 
     def __init__(self, envs: gym.Env, run_name: str, start_time: float, args: Dict[str, Any], ckpt: CPPOCheckpoint):
         if not ckpt.resumed:
             args = ap.Namespace(**vars(args), **vars(get_alg_args()))
         self.args = args
-        self.agent = ConditionedPPO(envs, args)
+        self.agent = RolloutBuffer(envs, args)
         self.ckpt = ckpt
         self.envs = envs
 

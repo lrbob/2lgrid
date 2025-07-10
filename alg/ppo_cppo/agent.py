@@ -2,6 +2,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from time import time
+from typing import Optional
+
+from common.logger import Logger
+from env.eval import Evaluator
 
 
 class RolloutBuffer:
@@ -27,138 +32,6 @@ class RolloutBuffer:
         self.extra_info.append(np.array(extra))
         self.log_probs.append(np.array(log_prob))
 
-    def get_all(self):
-        class Batch:
-            pass
-        b = Batch()
-        b.obs = np.array(self.obs)
-        b.actions = np.array(self.actions)
-        b.rewards = np.array(self.rewards)
-        b.costs = np.array(self.costs)
-        b.dones = np.array(self.dones)
-        b.extra_info = np.array(self.extra_info)
-        b.log_probs = np.array(self.log_probs)
-        return b
-
-    def clear(self):
-        self.obs = []
-        self.actions = []
-        self.rewards = []
-        self.costs = []
-        self.dones = []
-        self.extra_info = []
-        self.log_probs = []
-
-
-def compute_gae(rewards, costs, dones, values, gamma, gae_lambda, lambda_coef=0.0, thresholds=None):
-    """Compute generalized advantage estimation with optional cost penalty."""
-    T = rewards.shape[0]
-    advantages = torch.zeros_like(rewards)
-    lastgaelam = 0.0
-    for t in reversed(range(T)):
-        if t == T - 1:
-            next_value = values[t]
-        else:
-            next_value = values[t + 1]
-        delta = rewards[t] - lambda_coef * costs[t] + gamma * next_value * (1 - dones[t]) - values[t]
-        advantages[t] = lastgaelam = delta + gamma * gae_lambda * (1 - dones[t]) * lastgaelam
-    returns = advantages + values
-    return advantages, returns
-
-
-class ConditionedPPO(nn.Module):
-    """Conditioned PPO agent with optional threshold conditioning."""
-
-    def __init__(self, env, args):
-        super().__init__()
-        self.env = env
-        self.args = args
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        obs_shape = env.observation_space.shape
-        act_space = env.action_space
-
-        if act_space.__class__.__name__ == "Discrete":
-            self.discrete_action = True
-            action_dim = act_space.n
-        else:
-            self.discrete_action = False
-            action_dim = act_space.shape[0]
-
-        state_dim = obs_shape[0]
-
-        self.use_cvi = getattr(args, "cvi", False)
-        self.use_vve = getattr(args, "vve", False)
-        th_dim = 1
-        th_enc_dim = getattr(args, "threshold_embed_dim", 16)
-
-        actor_input_dim = state_dim
-        if self.use_cvi:
-            if getattr(args, "threshold_encoding", "raw") == "raw":
-                actor_input_dim += th_dim
-                self.threshold_encoder_actor = None
-            else:
-                self.threshold_encoder_actor = nn.Sequential(
-                    nn.Linear(th_dim, th_enc_dim), nn.ReLU(),
-                    nn.Linear(th_enc_dim, th_enc_dim), nn.ReLU()
-                )
-                actor_input_dim += th_enc_dim
-        else:
-            self.threshold_encoder_actor = None
-
-        hidden = 256
-        self.actor_fc1 = nn.Linear(actor_input_dim, hidden)
-        self.actor_fc2 = nn.Linear(hidden, hidden)
-        if self.discrete_action:
-            self.actor_out = nn.Linear(hidden, action_dim)
-        else:
-            self.actor_mu = nn.Linear(hidden, action_dim)
-            self.actor_logstd = nn.Linear(hidden, action_dim)
-
-        critic_input_dim = state_dim
-        if self.use_vve:
-            if getattr(args, "threshold_encoding", "raw") == "raw":
-                critic_input_dim += th_dim
-                self.threshold_encoder_critic = None
-            else:
-                self.threshold_encoder_critic = nn.Sequential(
-                    nn.Linear(th_dim, th_enc_dim), nn.ReLU(),
-                    nn.Linear(th_enc_dim, th_enc_dim), nn.ReLU()
-                )
-                critic_input_dim += th_enc_dim
-        else:
-            self.threshold_encoder_critic = None
-        self.critic_fc1 = nn.Linear(critic_input_dim, hidden)
-        self.critic_fc2 = nn.Linear(hidden, hidden)
-        self.critic_out = nn.Linear(hidden, 1)
-
-        self.actor_optimizer = torch.optim.Adam(self.parameters_actor(), lr=getattr(args, "lr_actor", 3e-4))
-        self.critic_optimizer = torch.optim.Adam(self.parameters_critic(), lr=getattr(args, "lr_critic", 3e-4))
-
-    def parameters_actor(self):
-        params = [self.actor_fc1.parameters(), self.actor_fc2.parameters()]
-        if self.discrete_action:
-            params.append(self.actor_out.parameters())
-        else:
-            params.extend([self.actor_mu.parameters(), self.actor_logstd.parameters()])
-        if self.threshold_encoder_actor:
-            params.append(self.threshold_encoder_actor.parameters())
-        return [p for sub in params for p in sub]
-
-    def parameters_critic(self):
-        params = [self.critic_fc1.parameters(), self.critic_fc2.parameters(), self.critic_out.parameters()]
-        if self.threshold_encoder_critic:
-            params.append(self.threshold_encoder_critic.parameters())
-        return [p for sub in params for p in sub]
-
-    def forward_actor(self, obs, thresholds=None):
-        if self.use_cvi and thresholds is not None:
-            if self.threshold_encoder_actor:
-                th_feat = self.threshold_encoder_actor(thresholds)
-                x = torch.cat([obs, th_feat], dim=-1)
-            else:
-                x = torch.cat([obs, thresholds], dim=-1)
-        else:
-            x = obs
         x = F.relu(self.actor_fc1(x))
         x = F.relu(self.actor_fc2(x))
         if self.discrete_action:
@@ -184,7 +57,28 @@ class ConditionedPPO(nn.Module):
         x = F.relu(self.critic_fc2(x))
         return self.critic_out(x).squeeze(-1)
 
-    def train(self, total_timesteps: int) -> None:
+    @torch.no_grad()
+    def get_eval_action(self, obs: torch.Tensor) -> torch.Tensor:
+        if self.use_cvi:
+            th_tensor = torch.full(
+                (obs.shape[0], 1),
+                getattr(self.args, "fixed_threshold", 0.0),
+                device=obs.device,
+            )
+        else:
+            th_tensor = None
+        dist = self.forward_actor(obs, th_tensor)
+        if self.discrete_action:
+            return dist.probs.argmax(dim=-1)
+        return dist.mean
+
+    def train(
+        self,
+        total_timesteps: int,
+        logger: Optional[Logger] = None,
+        evaluator: Optional[Evaluator] = None,
+        start_time: float = 0.0,
+    ) -> None:
         """Run the training loop for ``total_timesteps`` steps."""
 
         env = self.env
@@ -199,13 +93,14 @@ class ConditionedPPO(nn.Module):
                 current_thresholds[i] = getattr(self.args, "fixed_threshold", 0.0)
 
         obs, _ = env.reset()
+        global_step = 0
         storage = RolloutBuffer(
             self.args.n_steps,
             obs.shape[1:],
             env.action_space.shape[0] if not self.discrete_action else 1,
         )
 
-        for global_step in range(1, total_timesteps + 1):
+        for step in range(1, total_timesteps + 1):
             obs_tensor = torch.tensor(obs, dtype=torch.float32).to(self.device)
             th_tensor = (
                 torch.tensor(current_thresholds, dtype=torch.float32)
@@ -249,6 +144,12 @@ class ConditionedPPO(nn.Module):
                         current_thresholds[idx] = np.random.uniform(
                             self.args.threshold_min, self.args.threshold_max
                         )
+
+            global_step += num_envs
+            if evaluator and global_step % self.args.eval_freq == 0:
+                evaluator.evaluate(global_step, self)
+                if self.args.verbose:
+                    print(f"SPS={int(global_step / (time() - start_time))}")
 
             if len(storage.obs) >= self.args.n_steps:
                 batch = storage.get_all()

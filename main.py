@@ -1,6 +1,3 @@
-from multiprocessing import Manager
-from time import time
-
 from grid2op.gym_compat import BoxGymActSpace, DiscreteActSpace # if we import gymnasium, GymEnv will convert to Gymnasium!   
 
 from alg.dqn.core import DQN
@@ -8,16 +5,29 @@ from alg.lagr_ppo.core import LagrPPO
 from alg.ppo.core import PPO
 from alg.sac.core import SAC
 from alg.td3.core import TD3
-from common.checkpoint import DQNCheckpoint, LagrPPOCheckpoint, PPOCheckpoint, SACCheckpoint, TD3Checkpoint
+from common.checkpoint import (
+    DQNCheckpoint,
+    LagrPPOCheckpoint,
+    PPOCheckpoint,
+    SACCheckpoint,
+    TD3Checkpoint,
+    CPPOCheckpoint,
+)
 from common.imports import *
 from common.utils import set_random_seed, set_torch, str2bool
 from env.config import get_env_args
 from env.utils import auxiliary_make_env
-from alg.ppo_cppo.agent import ConditionedPPO
-# from alg.sac_cppo.agent import ConditionedSAC
+from alg.ppo_cppo.core import CPPO
 
 # Dictionary mapping algorithm names to their corresponding classes
-ALGORITHMS: Dict[str, Type[Any]] = {'DQN': DQN, 'PPO': PPO, 'SAC': SAC, 'TD3': TD3, 'LAGRPPO': LagrPPO, 'PPO_CCPO': ConditionedPPO, 'SAC_CCPO': ConditionedSAC}
+ALGORITHMS: Dict[str, Type[Any]] = {
+    'DQN': DQN,
+    'PPO': PPO,
+    'SAC': SAC,
+    'TD3': TD3,
+    'LAGRPPO': LagrPPO,
+    'PPO_CCPO': CPPO,
+}
 
 def main(args: Namespace) -> None:
     """
@@ -55,11 +65,18 @@ def main(args: Namespace) -> None:
 )
 
     # Initialize the appropriate checkpoint based on the algorithm
-    if alg == 'LAGRPPO': checkpoint = LagrPPOCheckpoint(run_name, args)
-    elif alg == 'DQN': checkpoint = DQNCheckpoint(run_name, args)
-    elif alg == ['PPO', 'PPO_CCPO'] : checkpoint = PPOCheckpoint(run_name, args)
-    # elif alg == ['SAC', 'SAC_CCPO'] : checkpoint = SACCheckpoint(run_name, args)
-    elif alg == 'TD3': checkpoint = TD3Checkpoint(run_name, args)
+    if alg == 'LAGRPPO':
+        checkpoint = LagrPPOCheckpoint(run_name, args)
+    elif alg == 'DQN':
+        checkpoint = DQNCheckpoint(run_name, args)
+    elif alg == 'PPO':
+        checkpoint = PPOCheckpoint(run_name, args)
+    elif alg == 'PPO_CCPO':
+        checkpoint = CPPOCheckpoint(run_name, args)
+    elif alg == 'SAC':
+        checkpoint = SACCheckpoint(run_name, args)
+    elif alg == 'TD3':
+        checkpoint = TD3Checkpoint(run_name, args)
     else:
         pass  # This case should not occur due to earlier assertion
 
@@ -85,35 +102,3 @@ def main(args: Namespace) -> None:
                 return auxiliary_make_env(args, resume_run=checkpoint.resumed, idx=idx, action_space=action_space)[0]
             
             return auxiliary_make_env(args, resume_run=checkpoint.resumed, idx=idx)[0]
-            
-        envs = gym.vector.AsyncVectorEnv([lambda i=i: make_vec_subprocess(i) for i in range(args.n_envs)])
-
-        # Run the specified algorithm
-        ALGORITHMS[alg](envs, run_name, start_time, args, checkpoint)
-        
-if __name__ == "__main__":
-    parser = ap.ArgumentParser()
-
-    # Cluster
-    parser.add_argument("--time-limit", type=float, default=1300, help="Time limit for the action ranking")
-    parser.add_argument("--checkpoint", type=str2bool, default=True, help="Toggles checkpoint.")
-    parser.add_argument("--resume-run-name", type=str, default='', help="Run name to resume")
-
-    # Reproducibility
-    parser.add_argument("--alg", type=str, default='PPO', help="Algorithm to run")
-    parser.add_argument("--seed", type=int, default=0, help="Random seed")
-
-    # Logger
-    parser.add_argument("--verbose", type=str2bool, default=True, help="Toggles prints")
-    parser.add_argument("--exp-tag", type=str, default='', help="Tag for logging the experiment")
-    parser.add_argument("--track", type=str2bool, default=False, help="Tag for logging the experiment")
-    parser.add_argument("--wandb-project", type=str, default="", help="Wandb's project name.")
-    parser.add_argument("--wandb-entity", type=str, default="", help="Entity (team) of wandb's project.")
-    parser.add_argument("--wandb-mode", type=str, default="offline", help="Online or offline wandb mode.")
-
-    # Torch
-    parser.add_argument("--th-deterministic", type=str2bool, default=True, help="Enable deterministic in Torch.")
-    parser.add_argument("--cuda", type=str2bool, default=False, help="Enable CUDA by default.")
-    parser.add_argument("--n-threads", type=int, default=4, help="Max number of torch threads.")
-
-    main(parser.parse_known_args()[0])

@@ -172,3 +172,17 @@ class DQNCheckpoint(CheckpointSaver):
         self.record['qnet_optim'] = qnet_optim.state_dict()
         self.record['wb_run_name'] = wb_run_name
         self.record['last_step'] = last_step
+
+class CPPOCheckpoint(CheckpointSaver):
+    def set_record(
+        self, args: Dict[str, Any], agent_state: Dict[str, Any], global_step: int,
+        wb_run_name: str, last_step: int = 0
+    ) -> None:
+        """Set the record for Conditioned PPO checkpoints."""
+        if global_step >= args.total_timesteps - args.n_envs:
+            self.run_name = 'final_' + self.run_name
+        self._get_base_record(global_step)
+        self.record['args'] = args
+        self.record['agent'] = agent_state
+        self.record['wb_run_name'] = wb_run_name
+        self.record['last_step'] = last_step
